@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Neon Dash — one-button endless runner</title>
+<style>
+  :root {
+    --bg: #0a0a12;
+    --panel: #12121f;
+    --neon: #00f0ff;
+    --neon2: #ff2bd6;
+    --text: #d8e6ff;
+    --dim: #6b7a99;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    overflow: hidden;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+  }
+  #wrap {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 12px;
+  }
+  #hud {
+    width: 100%;
+    max-width: 900px;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: 0 4px;
+  }
+  .hud-label { font-size: 11px; letter-spacing: 2px; color: var(--dim); text-transform: uppercase; }
+  .hud-value { font-size: 22px; font-weight: 700; color: var(--neon); text-shadow: 0 0 12px rgba(0,240,255,.6); font-variant-numeric: tabular-nums; }
+  #best .hud-value { color: var(--neon2); text-shadow: 0 0 12px rgba(255,43,214,.6); }
+  #bonus {
+    position: absolute;
+    top: 64px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 14px;
+    font-weight: 700;
+    color: #ffe14d;
+    text-shadow: 0 0 10px rgba(255,225,77,.8);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .25s;
+  }
+  #bonus.show { opacity: 1; }
+  #stage {
+    position: relative;
+    width: 100%;
+    max-width: 900px;
+    flex: 1;
+    min-height: 0;
+    border: 1px solid rgba(0,240,255,.25);
+    border-radius: 10px;
+    overflow: hidden;
+    background: #05050c;
+    box-shadow: 0 0 40px rgba(0,240,255,.08), inset 0 0 60px rgba(0,0,0,.6);
+  }
+  canvas { display: block; width: 100%; height: 100%; }
+  #overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    background: rgba(5,5,12,.72);
+    backdrop-filter: blur(3px);
+    text-align: center;
+    padding: 20px;
+  }
+  #overlay.hidden { display: none; }
+  #overlay h1 {
+    font-size: clamp(28px, 6vw, 46px);
+    font-weight: 800;
+    letter-spacing: 4px;
+    background: linear-gradient(90deg, var(--neon), var(--neon2));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    text-shadow: 0 0 30px rgba(0,240,255,.35);
+  }
+  #overlay p { color: var(--dim); font-size: 14px; max-width: 420px; line-height: 1.6; }
+  #overlay .final { font-size: 18px; color: var(--text); }
+  #overlay .final b { color: var(--neon); }
+  #startBtn {
+    margin-top: 6px;
+    padding: 12px 34px;
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    color: #05050c;
+    background: linear-gradient(90deg, var(--neon), var(--neon2));
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    box-shadow: 0 0 24px rgba(0,240,255,.5);
+    transition: transform .1s;
+  }
+  #startBtn:active { transform: scale(.96); }
+  #hint { font-size: 12px; color: var(--dim); letter-spacing: 1px; }
+  footer {
+    width: 100%;
+    max-width: 900px;
+    text-align: center;
+    font-size: 12px;
+    color: var(--dim);
+    padding: 4px 0 2px;
+  }
+  footer a { color: var(--neon); text-decoration: none; }
+  footer a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="hud">
+    <div><span class="hud-label">Score</span><div class="hud-value" id="score">0</div></div>
+    <div id="best"><span class="hud-label">Best</span><div class="hud-value" id="bestVal">0</div></div>
+  </div>
+  <div id="bonus">NEAR MISS +50</div>
+  <div id="stage">
+    <canvas id="game"></canvas>
+    <div id="overlay">
+      <h1>NEON DASH</h1>
+      <p class="final" id="finalMsg" style="display:none"></p>
+      <p>One button. Endless neon. Tap, click, or press <b>Space</b> / <b>&uarr;</b> to jump.
+      Clear an obstacle by a hair for a <b style="color:#ffe14d">near-miss bonus</b>. Speed keeps climbing — how long can you last?</p>
+      <button id="startBtn">START RUN</button>
+      <div id="hint">SPACE / &uarr; / TAP — one button only</div>
+    </div>
+  </div>
+  <footer>More free tools &amp; games for pixel artists &amp; game devs at <a href="https://pennypenguinapp-beep.github.io/" target="_blank" rel="noopener">pennypenguinapp-beep.github.io</a></footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var canvas = document.getElementById("game");
+  var ctx = canvas.getContext("2d");
+  var scoreEl = document.getElementById("score");
+  var bestEl = document.getElementById("bestVal");
+  var bonusEl = document.getElementById("bonus");
+  var overlay = document.getElementById("overlay");
+  var finalMsg = document.getElementById("finalMsg");
+  var startBtn = document.getElementById("startBtn");
+
+  var W = 0, H = 0, DPR = 1;
+  var GROUND_FRAC = 0.78;
+
+  // game state
+  var state = "menu"; // menu | running | dead
+  var speed = 0;
+  var baseSpeed = 0;
+  var score = 0;
+  var best = 0;
+  var time = 0;
+  var lastTs = 0;
+  var bonusTimer = 0;
+
+  try { best = parseInt(localStorage.getItem("neonDashBest") || "0", 10) || 0; } catch (e) { best = 0; }
+  bestEl.textContent = best;
+
+  // player
+  var player = {
+    x: 0, y: 0, vy: 0, w: 34, h: 34,
+    onGround: true, grounded: 0,
+    trail: []
+  };
+
+  // obstacles
+  var obstacles = [];
+  var spawnGap = 0;
+
+  // particles
+  var particles = [];
+
+  // parallax layers (procedural)
+  var stars = [];
+  var farBuildings = [];
+  var nearBuildings = [];
+  var gridOffset = 0;
+
+  function rand(a, b) { return a + Math.random() * (b - a); }
+  function irand(a, b) { return Math.floor(rand(a, b + 1)); }
+
+  function resize() {
+    var stage = document.getElementById("stage");
+    var rect = stage.getBoundingClientRect();
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = Math.max(1, Math.floor(rect.width));
+    H = Math.max(1, Math.floor(rect.height));
+    canvas.width = Math.floor(W * DPR);
+    canvas.height = Math.floor(H * DPR);
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    player.x = Math.max(60, W * 0.16);
+    player.w = Math.max(26, Math.min(40, W * 0.045));
+    player.h = player.w;
+    var groundY = H * GROUND_FRAC;
+    if (player.y === 0 || !player.onGround) player.y = groundY - player.h;
+    if (player.onGround) player.y = groundY - player.h;
+    buildScenery();
+  }
+
+  function buildScenery() {
+    stars = [];
+    var n = Math.floor(W / 14);
+    for (var i = 0; i < n; i++) {
+      stars.push({ x: Math.random() * W, y: Math.random() * H * 0.6, r: rand(0.5, 1.6), tw: Math.random() * Math.PI * 2, sp: rand(0.3, 1.2) });
+    }
+    farBuildings = [];
+    var x = 0;
+    while (x < W + 200) {
+      var bw = rand(40, 110);
+      var bh = rand(H * 0.12, H * 0.34);
+      farBuildings.push({ x: x, w: bw, h: bh, hue: Math.random() < 0.5 ? 185 : 310, win: Math.random() });
+      x += bw + rand(6, 24);
+    }
+    nearBuildings = [];
+    x = 0;
+    while (x < W + 200) {
+      var bw2 = rand(60, 150);
+      var bh2 = rand(H * 0.08, H * 0.2);
+      nearBuildings.push({ x: x, w: bw2, h: bh2, hue: Math.random() < 0.5 ? 185 : 310 });
+      x += bw2 + rand(14, 40);
+    }
+  }
+
+  function groundY() { return H * GROUND_FRAC; }
+
+  function reset() {
+    obstacles = [];
+    particles = [];
+    score = 0;
+    time = 0;
+    speed = 0;
+    baseSpeed = Math.max(260, W * 0.34);
+    player.y = groundY() - player.h;
+    player.vy = 0;
+    player.onGround = true;
+    player.trail = [];
+    spawnGap = 0.9; // seconds until first obstacle
+    scoreEl.textContent = "0";
+  }
+
+  function start() {
+    reset();
+    state = "running";
+    overlay.classList.add("hidden");
+    finalMsg.style.display = "none";
+    startBtn.textContent = "START RUN";
+  }
+
+  function die() {
+    state = "dead";
+    if (score > best) {
+      best = score;
+      bestEl.textContent = best;
+      try { localStorage.setItem("neonDashBest", String(best)); } catch (e) {}
+    }
+    // burst particles
+    for (var i = 0; i < 40; i++) {
+      particles.push({
+        x: player.x + player.w / 2,
+        y: player.y + player.h / 2,
+        vx: rand(-260, 260),
+        vy: rand(-320, 120),
+        life: rand(0.5, 1.1),
+        max: 1.1,
+        r: rand(1.5, 4),
+        c: Math.random() < 0.5 ? "#00f0ff" : "#ff2bd6"
+      });
+    }
+    finalMsg.innerHTML = "Score <b>" + score + "</b> &nbsp;·&nbsp; Best <b>" + best + "</b>";
+    finalMsg.style.display = "block";
+    startBtn.textContent = "RUN AGAIN";
+    overlay.classList.remove("hidden");
+  }
+
+  function jump() {
+    if (state === "menu") { start(); return; }
+    if (state === "dead") {
+      // small delay guard handled by overlay button; allow tap restart after 400ms
+      start();
+      return;
+    }
+    if (state !== "running") return;
+    if (player.onGround) {
+      player.vy = -Math.max(560, H * 0.95);
+      player.onGround = false;
+      // dust
+      for (var i = 0; i < 8; i++) {
+        particles.push({
+          x: player.x + rand(0, player.w),
+          y: groundY(),
+          vx: rand(-80, 80),
+          vy: rand(-60, -10),
+          life: rand(0.25, 0.5),
+          max: 0.5,
+          r: rand(1, 2.5),
+          c: "#8fd8ff"
+        });
+      }
+    }
+  }
+
+  function spawnObstacle() {
+    var gy = groundY();
+    var type = Math.random();
+    var o;
+    if (type < 0.5) {
+      // ground spike block
+      var w = rand(26, 46);
+      var h = rand(34, 62);
+      o = { x: W + 60, y: gy - h, w: w, h: h, kind: "block", passed: false, near: false };
+    } else if (type < 0.8) {
+      // tall thin pillar
+      var w2 = rand(18, 28);
+      var h2 = rand(56, 92);
+      o = { x: W + 60, y: gy - h2, w: w2, h: h2, kind: "pillar", passed: false, near: false };
+    } else {
+      // floating bar (must NOT jump into; jump timing matters)
+      var w3 = rand(50, 90);
+      var h3 = rand(16, 24);
+      var y3 = gy - rand(H * 0.22, H * 0.34);
+      o = { x: W + 60, y: y3, w: w3, h: h3, kind: "bar", passed: false, near: false };
+    }
+    obstacles.push(o);
+  }
+
+  function update(dt) {
+    time += dt;
+    if (state === "running") {
+      // speed ramp
+      speed = baseSpeed + Math.min(420, time * 22);
+      score += dt * (10 + time * 0.6);
+      scoreEl.textContent = String(Math.floor(score));
+
+      // player physics
+      player.vy += 1900 * dt;
+      player.y += player.vy * dt;
+      var gy = groundY();
+      if (player.y + player.h >= gy) {
+        player.y = gy - player.h;
+        player.vy = 0;
+        if (!player.onGround) {
+          // landing dust
+          for (var i = 0; i < 6; i++) {
+            particles.push({ x: player.x + rand(0, player.w), y: gy, vx: rand(-60, 60), vy: rand(-40, -5), life: rand(0.2, 0.4), max: 0.4, r: rand(1, 2), c: "#8fd8ff" });
+          }
+        }
+        player.onGround = true;
+      } else {
+        player.onGround = false;
+      }
+
+      // trail
+      player.trail.push({ x: player.x + player.w / 2, y: player.y + player.h / 2, life: 0.35 });
+      if (player.trail.length > 24) player.trail.shift();
+
+      // spawn
+      spawnGap -= dt;
+      if (spawnGap <= 0) {
+        spawnObstacle();
+        var minGap = Math.max(0.55, 1.05 - time * 0.012);
+        spawnGap = minGap + rand(0, 0.5);
+      }
+
+      // move obstacles + collisions
+      var px = player.x, py = player.y, pw = player.w, ph = player.h;
+      for (var j = obstacles.length - 1; j >= 0; j--) {
+        var o = obstacles[j];
+        o.x -= speed * dt;
+
+        // near-miss detection: obstacle passed player x, was close, no collision
+        if (!o.passed && o.x + o.w < px) {
+          o.passed = true;
+          if (!o.near) {
+            // compute min clearance during pass: use current vertical/horizontal gap
+            var gapX = px - (o.x + o.w);
+            var gapY;
+            if (o.y + o.h < py) gapY = py - (o.y + o.h);
+            else if (o.y > py + ph) gapY = o.y - (py + ph);
+            else gapY = 0;
+            var clearance = Math.min(gapX, gapY);
+            if (clearance < 26) {
+              o.near = true;
+              score += 50;
+              scoreEl.textContent = String(Math.floor(score));
+              bonusEl.classList.add("show");
+              bonusTimer = 0.9;
+            }
+          }
+        }
+
+        // AABB collision (slightly forgiving)
+        var f = 4;
+        if (px + f < o.x + o.w && px + pw - f > o.x && py + f < o.y + o.h && py + ph - f > o.y) {
+          die();
+          break;
+        }
+
+        if (o.x + o.w < -80) obstacles.splice(j, 1);
+      }
+
+      if (bonusTimer > 0) {
+        bonusTimer -= dt;
+        if (bonusTimer <= 0) bonusEl.classList.remove("show");
+      }
+    }
+
+    // parallax scroll
+    var scroll = (state === "running" ? speed : 60) * dt;
+    gridOffset = (gridOffset + scroll * 0.5) % 48;
+    for (var s = 0; s < stars.length; s++) {
+      stars[s].x -= scroll * 0.05 * stars[s].sp;
+      if (stars[s].x < -2) stars[s].x = W + 2;
+    }
+    for (var f2 = 0; f2 < farBuildings.length; f2++) {
+      farBuildings[f2].x -= scroll * 0.12;
+      if (farBuildings[f2].x + farBuildings[f2].w < -10) {
+        var lastF = farBuildings[farBuildings.length - 1];
+        farBuildings[f2].x = lastF.x + lastF.w + rand(6, 24);
+        farBuildings[f2].w = rand(40, 110);
+        farBuildings[f2].h = rand(H * 0.12, H * 0.34);
+      }
+    }
+    for (var n2 = 0; n2 < nearBuildings.length; n2++) {
+      nearBuildings[n2].x -= scroll * 0.3;
+      if (nearBuildings[n2].x + nearBuildings[n2].w < -10) {
+        var lastN = nearBuildings[nearBuildings.length - 1];
+        nearBuildings[n2].x = lastN.x + lastN.w + rand(14, 40);
+        nearBuildings[n2].w = rand(60, 150);
+        nearBuildings[n2].h = rand(H * 0.08, H * 0.2);
+      }
+    }
+
+    // particles
+    for (var p = particles.length - 1; p >= 0; p--) {
+      var pt = particles[p];
+      pt.life -= dt;
+      if (pt.life <= 0) { particles.splice(p, 1); continue; }
+      pt.x += pt.vx * dt;
+      pt.y += pt.vy * dt;
+      pt.vy += 600 * dt;
+    }
+
+    // trail decay
+    for (var t = player.trail.length - 1; t >= 0; t--) {
+      player.trail[t].life -= dt;
+      if (player.trail[t].life <= 0) player.trail.splice(t, 1);
+    }
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+
+    // sky gradient
+    var sky = ctx.createLinearGradient(0, 0, 0, H);
+    sky.addColorStop(0, "#05050e");
+    sky.addColorStop(0.55, "#0a0a1a");
+    sky.addColorStop(1, "#120a20");
+    ctx.fillStyle = sky;
+    ctx.fillRect(0, 0, W, H);
+
+    // stars
+    for (var i = 0; i < stars.length; i++) {
+      var st = stars[i];
+      var tw = 0.5 + 0.5 * Math.sin(time * st.sp * 3 + st.tw);
+      ctx.globalAlpha = 0.3 + 0.7 * tw;
+      ctx.fillStyle = "#cfeaff";
+      ctx.fillRect(st.x, st.y, st.r, st.r);
+    }
+    ctx.globalAlpha = 1;
+
+    // far buildings
+    var gy = groundY();
+    for (var f = 0; f < farBuildings.length; f++) {
+      var b = farBuildings[f];
+      var col = b.hue === 185 ? "rgba(0,120,150,0.35)" : "rgba(150,40,140,0.35)";
+      ctx.fillStyle = col;
+      ctx.fillRect(b.x, gy - b.h, b.w, b.h);
+      // top edge glow line
+      ctx.fillStyle = b.hue === 185 ? "rgba(0,240,255,0.5)" : "rgba(255,43,214,0.5)";
+      ctx.fillRect(b.x, gy - b.h, b.w, 2);
+      // windows
+      if (b.win > 0.4) {
+        ctx.fillStyle = "rgba(200,240,255,0.18)";
+        var rows = Math.floor(b.h / 18);
+        var cols = Math.floor(b.w / 16);
+        for (var r = 0; r < rows; r++) {
+          for (var c = 0; c < cols; c++) {
+            if (((r * 7 + c * 13 + Math.floor(b.x)) % 5) < 2) {
+              ctx.fillRect(b.x + 4 + c * 16, gy - b.h + 6 + r * 18, 6, 8);
+            }
+          }
+        }
+      }
+    }
+
+    // near buildings
+    for (var n = 0; n < nearBuildings.length; n++) {
+      var nb = nearBuildings[n];
+      ctx.fillStyle = nb.hue === 185 ? "rgba(0,60,80,0.55)" : "rgba(80,20,80,0.55)";
+      ctx.fillRect(nb.x, gy - nb.h, nb.w, nb.h);
+      ctx.fillStyle = nb.hue === 185 ? "rgba(0,240,255,0.6)" : "rgba(255,43,214,0.6)";
+      ctx.fillRect(nb.x, gy - nb.h, nb.w, 2);
+    }
+
+    // ground
+    var gg = ctx.createLinearGradient(0, gy, 0, H);
+    gg.addColorStop(0, "#0c1424");
+    gg.addColorStop(1, "#05050c");
+    ctx.fillStyle = gg;
+    ctx.fillRect(0, gy, W, H - gy);
+
+    // neon ground line
+    ctx.strokeStyle = "#00f0ff";
+    ctx.lineWidth = 2;
+    ctx.shadowColor = "#00f0ff";
+    ctx.shadowBlur = 14;
+    ctx.beginPath();
+    ctx.moveTo(0, gy);
+    ctx.lineTo(W, gy);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    // perspective grid on ground
+    ctx.strokeStyle = "rgba(0,240,255,0.18)";
+    ctx.lineWidth = 1;
+    var cell = 48;
+    for (var gx = -gridOffset; gx < W + cell; gx += cell) {
+      ctx.beginPath();
+      ctx.moveTo(gx, gy);
+      ctx.lineTo(gx + (gx - W / 2) * 0.6, H);
+      ctx.stroke();
+    }
+    for (var gy2 = gy + 12; gy2 < H; gy2 += 16) {
+      ctx.beginPath();
+      ctx.moveTo(0, gy2);
+      ctx.lineTo(W, gy2);
+      ctx.stroke();
+    }
+
+    // obstacles
+    for (var o = 0; o < obstacles.length; o++) {
+      var ob = obstacles[o];
+      var isCyan = ob.kind !== "bar";
+      var main = isCyan ? "#00f0ff" : "#ff2bd6";
+      ctx.shadowColor = main;
+      ctx.shadowBlur = 16;
+      ctx.fillStyle = isCyan ? "rgba(0,240,255,0.85)" : "rgba(255,43,214,0.85)";
+      ctx.fillRect(ob.x, ob.y, ob.w, ob.h);
+      ctx.shadowBlur = 0;
+      // inner darker core
+      ctx.fillStyle = "rgba(5,5,12,0.55)";
+      ctx.fillRect(ob.x + 3, ob.y + 3, Math.max(1, ob.w - 6), Math.max(1, ob.h - 6));
+      // edge highlight
+      ctx.strokeStyle = main;
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(ob.x + 0.5, ob.y + 0.5, ob.w - 1, ob.h - 1);
+    }
+
+    // player trail
+    for (var tr = 0; tr < player.trail.length; tr++) {
+      var tp = player.trail[tr];
+      var a = tp.life / 0.35;
+      ctx.globalAlpha = a * 0.35;
+      ctx.fillStyle = "#00f0ff";
+      var r = 3 + a * 5;
+      ctx.beginPath();
+      ctx.arc(tp.x, tp.y, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    // player (neon runner block with eye)
+    var px = player.x, py = player.y, pw = player.w, ph = player.h;
+    ctx.shadowColor = "#00f0ff";
+    ctx.shadowBlur = 18;
+    var pg = ctx.createLinearGradient(px, py, px, py + ph);
+    pg.addColorStop(0, "#7df9ff");
+    pg.addColorStop(1, "#00b8d4");
+    ctx.fillStyle = pg;
+    ctx.fillRect(px, py, pw, ph);
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = "#00f0ff";
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(px + 0.5, py + 0.5, pw - 1, ph - 1);
+    // eye
+    ctx.fillStyle = "#05050c";
+    var eyeX = px + pw * 0.62, eyeY = py + ph * 0.32;
+    ctx.fillRect(eyeX, eyeY, pw * 0.22, ph * 0.2);
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(eyeX + 2, eyeY + 2, 3, 3);
+    // speed lines behind player when running
+    if (state === "running") {
+      ctx.strokeStyle = "rgba(0,240,255,0.4)";
+      ctx.lineWidth = 2;
+      for (var sl = 0; sl < 3; sl++) {
+        var ly = py + ph * (0.25 + sl * 0.25);
+        ctx.beginPath();
+        ctx.moveTo(px - 6 - sl * 6, ly);
+        ctx.lineTo(px - 26 - sl * 10, ly);
+        ctx.stroke();
+      }
+    }
+
+    // particles
+    for (var pi = 0; pi < particles.length; pi++) {
+      var pp = particles[pi];
+      var pa = Math.max(0, pp.life / pp.max);
+      ctx.globalAlpha = pa;
+      ctx.fillStyle = pp.c;
+      ctx.beginPath();
+      ctx.arc(pp.x, pp.y, pp.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    // vignette
+    var vg = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.35, W / 2, H / 2, Math.max(W, H) * 0.75);
+    vg.addColorStop(0, "rgba(0,0,0,0)");
+    vg.addColorStop(1, "rgba(0,0,0,0.5)");
+    ctx.fillStyle = vg;
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  function loop(ts) {
+    if (!lastTs) lastTs = ts;
+    var dt = (ts - lastTs) / 1000;
+    lastTs = ts;
+    if (dt > 0.05) dt = 0.05;
+    update(dt);
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  // input
+  window.addEventListener("keydown", function (e) {
+    if (e.code === "Space" || e.code === "ArrowUp" || e.code === "KeyW") {
+      e.preventDefault();
+      jump();
+    }
+  });
+  canvas.addEventListener("pointerdown", function (e) { e.preventDefault(); jump(); }, { passive: false });
+  startBtn.addEventListener("click", function (e) { e.stopPropagation(); jump(); });
+  document.getElementById("stage").addEventListener("pointerdown", function (e) {
+    if (e.target === startBtn) return;
+    e.preventDefault();
+    jump();
+  }, { passive: false });
+
+  window.addEventListener("resize", resize);
+  resize();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
