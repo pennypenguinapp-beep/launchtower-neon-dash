@@ -101,8 +101,8 @@
   #overlay .final b { color: var(--neon); }
   #startBtn {
     margin-top: 6px;
-    padding: 12px 34px;
-    font-size: 16px;
+    padding: 16px 44px;
+    font-size: 18px;
     font-weight: 700;
     letter-spacing: 2px;
     color: #05050c;
@@ -123,6 +123,7 @@
     color: var(--dim);
     padding: 4px 0 2px;
   }
+  footer .brand { color: var(--neon); font-weight: 700; letter-spacing: 1px; }
   footer a { color: var(--neon); text-decoration: none; }
   footer a:hover { text-decoration: underline; }
 </style>
@@ -137,15 +138,15 @@
   <div id="stage">
     <canvas id="game"></canvas>
     <div id="overlay">
-      <h1>NEON DASH</h1>
+      <h1 id="ovTitle">NEON DASH</h1>
       <p class="final" id="finalMsg" style="display:none"></p>
-      <p>One button. Endless neon. Tap, click, or press <b>Space</b> / <b>&uarr;</b> to jump.
+      <p id="ovSub">One button. Endless neon. Tap, click, or press <b>Space</b> / <b>&uarr;</b> to jump.
       Clear an obstacle by a hair for a <b style="color:#ffe14d">near-miss bonus</b>. Speed keeps climbing — how long can you last?</p>
-      <button id="startBtn">START RUN</button>
-      <div id="hint">SPACE / &uarr; / TAP — one button only</div>
+      <button id="startBtn">PLAY</button>
+      <div id="hint">SPACE / &uarr; / TAP — one button only · P to pause</div>
     </div>
   </div>
-  <footer>More free tools &amp; games for pixel artists &amp; game devs at <a href="https://pennypenguinapp-beep.github.io/" target="_blank" rel="noopener">pennypenguinapp-beep.github.io</a></footer>
+  <footer><span class="brand">LaunchTower</span> — more free tools &amp; games for pixel artists &amp; game devs at <a href="https://pennypenguinapp-beep.github.io/" target="_blank" rel="noopener">pennypenguinapp-beep.github.io</a></footer>
 </div>
 
 <script>
@@ -160,9 +161,12 @@
   var overlay = document.getElementById("overlay");
   var finalMsg = document.getElementById("finalMsg");
   var startBtn = document.getElementById("startBtn");
+  var ovTitle = document.getElementById("ovTitle");
+  var ovSub = document.getElementById("ovSub");
 
   var W = 0, H = 0, DPR = 1;
   var GROUND_FRAC = 0.78;
+  var paused = false;
 
   // game state
   var state = "menu"; // menu | running | dead
@@ -259,12 +263,44 @@
     scoreEl.textContent = "0";
   }
 
+  // --- WebAudio sound cues (no audio files) ---
+  var actx = null;
+  function audio() {
+    if (!actx) {
+      try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { actx = null; }
+    }
+    if (actx && actx.state === "suspended") actx.resume();
+    return actx;
+  }
+  function beep(freq, dur, type, vol, when) {
+    var a = audio();
+    if (!a) return;
+    try {
+      var o = a.createOscillator();
+      var g = a.createGain();
+      var t0 = a.currentTime + (when || 0);
+      o.type = type || "square";
+      o.frequency.setValueAtTime(freq, t0);
+      g.gain.setValueAtTime(vol || 0.06, t0);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+      o.connect(g); g.connect(a.destination);
+      o.start(t0); o.stop(t0 + dur + 0.02);
+    } catch (e) {}
+  }
+  function sfxJump() { beep(440, 0.08, "square", 0.05); beep(660, 0.09, "square", 0.04, 0.05); }
+  function sfxBonus() { beep(880, 0.07, "triangle", 0.07); beep(1320, 0.1, "triangle", 0.06, 0.06); }
+  function sfxDie() { beep(220, 0.18, "sawtooth", 0.08); beep(110, 0.3, "sawtooth", 0.07, 0.1); }
+
   function start() {
     reset();
     state = "running";
+    paused = false;
     overlay.classList.add("hidden");
     finalMsg.style.display = "none";
-    startBtn.textContent = "START RUN";
+    ovTitle.textContent = "NEON DASH";
+    ovSub.style.display = "block";
+    startBtn.textContent = "PLAY";
+    audio();
   }
 
   function die() {
@@ -287,10 +323,16 @@
         c: Math.random() < 0.5 ? "#00f0ff" : "#ff2bd6"
       });
     }
-    finalMsg.innerHTML = "Score <b>" + score + "</b> &nbsp;·&nbsp; Best <b>" + best + "</b>";
+    sfxDie();
+    var newBest = score >= best && score > 0;
+    finalMsg.innerHTML = (newBest ? "NEW BEST! " : "") + "Score <b>" + score + "</b> &nbsp;·&nbsp; Best <b>" + best + "</b>";
     finalMsg.style.display = "block";
-    startBtn.textContent = "RUN AGAIN";
-    overlay.classList.remove("hidden");
+    ovTitle.textContent = "WRECKED!";
+    ovSub.style.display = "none";
+    startBtn.textContent = "PLAY AGAIN";
+    setTimeout(function () {
+      if (state === "dead") overlay.classList.remove("hidden");
+    }, 450);
   }
 
   function jump() {
@@ -300,8 +342,9 @@
       start();
       return;
     }
-    if (state !== "running") return;
+    if (state !== "running" || paused) return;
     if (player.onGround) {
+      sfxJump();
       player.vy = -Math.max(560, H * 0.95);
       player.onGround = false;
       // dust
@@ -405,6 +448,7 @@
               scoreEl.textContent = String(Math.floor(score));
               bonusEl.classList.add("show");
               bonusTimer = 0.9;
+              sfxBonus();
             }
           }
         }
@@ -647,23 +691,43 @@
     var dt = (ts - lastTs) / 1000;
     lastTs = ts;
     if (dt > 0.05) dt = 0.05;
-    update(dt);
+    if (!paused) update(dt);
     draw();
     requestAnimationFrame(loop);
   }
+
+  function showPause() {
+    if (state !== "running" || paused) return;
+    paused = true;
+    ovTitle.textContent = "PAUSED";
+    ovSub.style.display = "none";
+    finalMsg.innerHTML = "Score <b>" + Math.floor(score) + "</b> &nbsp;·&nbsp; Best <b>" + best + "</b>";
+    finalMsg.style.display = "block";
+    startBtn.textContent = "RESUME";
+    overlay.classList.remove("hidden");
+  }
+
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden) showPause();
+  });
 
   // input
   window.addEventListener("keydown", function (e) {
     if (e.code === "Space" || e.code === "ArrowUp" || e.code === "KeyW") {
       e.preventDefault();
+      if (paused) { paused = false; overlay.classList.add("hidden"); audio(); return; }
       jump();
+    } else if (e.code === "KeyP" || e.code === "Escape") {
+      if (state === "running" && !paused) showPause();
+      else if (paused) { paused = false; overlay.classList.add("hidden"); }
     }
   });
-  canvas.addEventListener("pointerdown", function (e) { e.preventDefault(); jump(); }, { passive: false });
-  startBtn.addEventListener("click", function (e) { e.stopPropagation(); jump(); });
+  canvas.addEventListener("pointerdown", function (e) { e.preventDefault(); if (paused) { paused = false; overlay.classList.add("hidden"); audio(); return; } jump(); }, { passive: false });
+  startBtn.addEventListener("click", function (e) { e.stopPropagation(); if (paused) { paused = false; overlay.classList.add("hidden"); audio(); return; } jump(); });
   document.getElementById("stage").addEventListener("pointerdown", function (e) {
     if (e.target === startBtn) return;
     e.preventDefault();
+    if (paused) { paused = false; overlay.classList.add("hidden"); audio(); return; }
     jump();
   }, { passive: false });
 
